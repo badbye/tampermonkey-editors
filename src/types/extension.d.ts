@@ -7,7 +7,9 @@ export interface WebSocketConnectRequest {
     method: 'connectWebSocket';
     args?: {
         authorization: string;
-        port: number;
+        port?: number;
+        wsUrl?: string;
+        authMode?: 'legacy' | 'hub';
     };
 }
 

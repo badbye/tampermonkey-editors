@@ -46,6 +46,7 @@
                         <input
                         v-model="code"
                         @input="onInput"
+                        @paste="onCodePaste"
                         autocomplete="off"
                         spellcheck="false"
                         class="field-input"
@@ -81,6 +82,27 @@
         <div class="col-xs-12">
             <div class="card card-settings">
                 <h2 class="card-title">Settings</h2>
+
+                <div class="settings-row">
+                    <label class="field field-checkbox">
+                        <input type="checkbox" v-model="autoConnect" @change="onAutoConnectChange" />
+                        <span class="field-label">Auto-connect to tm-mcp-hub</span>
+                    </label>
+                </div>
+
+                <div class="settings-row">
+                    <label class="field">
+                        <span class="field-label">Hub URL</span>
+                        <input v-model="hubUrl" class="field-input" spellcheck="false" @change="onHubUrlChange" />
+                    </label>
+                </div>
+
+                <div class="settings-row">
+                    <label class="field">
+                        <span class="field-label">Hub token</span>
+                        <input v-model="hubToken" class="field-input" type="password" autocomplete="off" spellcheck="false" @change="onHubTokenChange" />
+                    </label>
+                </div>
 
                 <div class="settings-row">
                     <label class="field">
@@ -141,6 +163,9 @@ const LOG_LEVEL_OPTIONS = [
 ] as const;
 
 const logLevel = ref<number | null>(null);
+const autoConnect = ref(false);
+const hubUrl = ref('');
+const hubToken = ref('');
 
 async function loadLogLevel() {
     const stored = await getOptionRequest('logLevel');
@@ -149,6 +174,12 @@ async function loadLogLevel() {
     } else {
         logLevel.value = WARN;
     }
+}
+
+async function loadHubOptions() {
+    autoConnect.value = Boolean(await getOptionRequest('autoConnect'));
+    hubUrl.value = String(await getOptionRequest('hubUrl') || '');
+    hubToken.value = String(await getOptionRequest('hubToken') || '');
 }
 
 const runtime = chrome.runtime;
@@ -225,6 +256,15 @@ function onInput() {
     }
 }
 
+function onCodePaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData('text') ?? '';
+    if (/^[a-zA-Z0-9]{3,}$/.test(text)) {
+        e.preventDefault();
+        code.value = text;
+        connectWithCode(text);
+    }
+}
+
 function submit() {
     connectWithCode(code.value);
 }
@@ -259,19 +299,23 @@ function onLogLevelChange() {
     runtime.sendMessage(payload);
 }
 
-onMounted(async () => {
-    document.addEventListener('paste', (e: ClipboardEvent) => {
-        const text = e.clipboardData?.getData('text') ?? '';
-        if (/^[a-zA-Z0-9]{3,}$/.test(text)) {
-            e.preventDefault();
-            code.value = text;
-            connectWithCode(text);
-        }
-    });
+function onAutoConnectChange() {
+    runtime.sendMessage(createSetOptionRequest('autoConnect', autoConnect.value));
+}
 
+function onHubUrlChange() {
+    runtime.sendMessage(createSetOptionRequest('hubUrl', hubUrl.value));
+}
+
+function onHubTokenChange() {
+    runtime.sendMessage(createSetOptionRequest('hubToken', hubToken.value));
+}
+
+onMounted(async () => {
     await sleep(1); // wait for the DOM to be ready
 
     loadLogLevel();
+    loadHubOptions();
     getState();
 });
 </script>
@@ -475,6 +519,11 @@ $device-lg: 1200px;
     font-size: 0.75rem;
     font-weight: 500;
     color: #4b5563;
+}
+
+.field-checkbox {
+    flex-direction: row;
+    align-items: center;
 }
 
 .field-input {

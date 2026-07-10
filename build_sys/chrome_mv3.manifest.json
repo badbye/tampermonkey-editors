@@ -20,6 +20,7 @@
     },
     "name": "Tampermonkey Editors",
     "short_name": "Tampermonkey Editors",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyjSl1B4k7QuNmuTG1VuLXVeefNS4n2J3KsMnj3yZqLIAtlhoyLFxV0lSvdVUQU3SGna4G+7gVmxjnmCN4BoLXEsMMKQU6of0Th/NB+Gq2t4gcy5vXsx8cv8XQA37sZ5TwR70YAStgFDvQDLoVedV+URNcKGKEBV9kRl99JLY+NXpUjyg63Is5mUlZrCmlGmo1y83dKC6MmVNVX1uxCFhVoD1R8zSFf51L+eXwjMTwdBVw2/PpcW3Q07l69cJTjgvDPQCf2S6YzAg78oN1LvAahkPSvf8jbujXDItyMEAJ+SugY69UQdrHc7OlYpld+NfZBiB2HnqYUFl27JadL/ydQIDAQAB",
     "version": "__short_version__.__bundle_version__",
     "description": "Online editor support for Tampermonkey's userscripts",
     "default_locale": "en",
@@ -34,6 +35,8 @@
         "scripting"
     ],
     "host_permissions": [
+        "http://127.0.0.1/*",
+        "ws://127.0.0.1/*",
         "https://*.vscode.dev/*"
     ]
 }

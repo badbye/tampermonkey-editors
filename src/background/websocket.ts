@@ -11,10 +11,10 @@ export class LocalWebSocketClient {
     static g: LocalWebSocketClient | undefined;
     public state: 'connecting' | 'open' | 'closed' | undefined;
 
-    constructor(auth: string, port: number) {
+    constructor(auth: string, portOrUrl: number | string, authMode: 'legacy' | 'hub' = 'legacy') {
         if (LocalWebSocketClient.g) LocalWebSocketClient.g.close();
         LocalWebSocketClient.g = this;
-        const wsUrl = `ws://localhost:${port}`;
+        const wsUrl = typeof portOrUrl === 'number' ? `ws://localhost:${portOrUrl}` : portOrUrl;
         this.connected = this._prepareConnection();
 
         let ws: WebSocket;
@@ -68,7 +68,9 @@ export class LocalWebSocketClient {
 
             if (D) console.debug('Websocket keepAlive START');
 
-            ws.send(JSON.stringify({ method: 'auth', token: auth[0] }));
+            ws.send(JSON.stringify(authMode === 'hub'
+                ? { type: 'auth', token: auth }
+                : { method: 'auth', token: auth[0] }));
         };
 
         ws.onerror = (err) => {
@@ -81,11 +83,25 @@ export class LocalWebSocketClient {
         let authOK = false;
         ws.onmessage = (event) => {
             try {
-                const data: { method: string; token: string } = JSON.parse(event.data);
+                const data: { method?: string; type?: string; token?: string } = JSON.parse(event.data);
 
                 if (!authOK) {
+                    if (authMode === 'hub') {
+                        if (data.type !== 'auth_ok') {
+                            console.error('WebSocket hub authentication failed');
+                            this.rejectConnected('Hub auth failed');
+                            ws.close();
+                            return;
+                        }
+
+                        authOK = true;
+                        this.resolveConnected(this);
+                        console.log('WebSocket: ready for hub messaging:');
+                        return;
+                    }
+
                     if (data.method !== 'auth' || data.token !== auth[1]) {
-                        console.error('WebSocket authentication failed', data.method, port);  // Not mentioning the auth purposefully
+                        console.error('WebSocket authentication failed', data.method, portOrUrl);  // Not mentioning the auth purposefully
                         this.rejectConnected('Server Auth failed');
                         ws.close();
                         return;

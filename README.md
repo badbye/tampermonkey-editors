@@ -1,5 +1,42 @@
 # Tampermonkey Editors
 
+This fork can auto-connect to `tm-mcp-hub`, so AI agents no longer need a one-time connection code for every MCP server start.
+
+The Chrome development manifest includes the official Tampermonkey Editors public key, so an unpacked local build keeps the official Chrome extension ID:
+
+```text
+lieodnapokbjkkdkhdljlllmgkmdokcm
+```
+
+Tampermonkey allows that ID to use its external userscript API, so local development builds can connect without patching the installed Tampermonkey extension.
+
+## Auto-connect with tm-mcp-hub
+
+1. Build and start the Hub from the `tampermonkey-mcp` checkout:
+
+```bash
+cd ../tampermonkey-mcp
+npm install
+npm run build
+node dist/index.js init
+node dist/index.js trust
+node dist/index.js daemon start
+```
+
+2. Open the Tampermonkey Editors popup.
+
+3. Enable `Auto-connect to tm-mcp-hub`.
+
+4. Keep the default Hub URL unless you changed the Hub port:
+
+```text
+http://127.0.0.1:4001/.well-known/tampermonkey-mcp
+```
+
+5. Paste the token printed by `node dist/index.js trust` into `Hub token`.
+
+After this one-time setup, the extension discovers the Hub and reconnects automatically after Chrome restarts, extension reloads, or Hub restarts. The old `Connection code` field is still available for legacy direct WebSocket connections, but it is no longer the normal MCP workflow.
+
 ## Building
 
 ```bash

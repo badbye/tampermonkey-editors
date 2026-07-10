@@ -21,6 +21,17 @@ import { LocalWebSocketClient } from './websocket';
 const MAIN_URL = 'https://vscode.dev/?connectTo=tampermonkey';
 const { runtime, action, tabs, webNavigation, scripting } = chrome;
 const D = true;
+const RECONNECT_DELAYS = [ 1000, 2000, 5000, 10000, 30000, 60000 ];
+const TAMPERMONKEY_REQUEST_TIMEOUT = 10000;
+const TAMPERMONKEY_REQUEST_ATTEMPTS = 2;
+const TAMPERMONKEY_RETRY_DELAY = 100;
+
+type HubDiscovery = {
+    version: string;
+    wsUrl: string;
+    instanceId: string;
+    requiresAuth: boolean;
+};
 
 const setForbidden = async (forbidden: boolean) => {
     /* eslint-disable @typescript-eslint/naming-convention */
@@ -121,27 +132,63 @@ const init = async () => {
             lock = new Promise<void>(r => resolve = r);
             lock.finally(() => lock = undefined);
 
-            const r = await findTm([ MAIN_URL ]);
+            try {
+                for (let attempt = 0; attempt < TAMPERMONKEY_REQUEST_ATTEMPTS; attempt++) {
+                    const r = await findTm([ MAIN_URL ]);
 
-            if (!r.length) {
-                sendResponse({ error: 'no extension to talk to' });
+                    if (!r.length) {
+                        if (attempt + 1 < TAMPERMONKEY_REQUEST_ATTEMPTS) {
+                            await new Promise(done => setTimeout(done, TAMPERMONKEY_RETRY_DELAY));
+                            continue;
+                        }
+                        sendResponse({ error: 'no extension to talk to' });
+                        return;
+                    }
+
+                    const [ { id, port } ] = r;
+                    console.log(`Found extension ${id}`);
+
+                    const response = await new Promise<BackgroundToContent | undefined>(done => {
+                        let settled = false;
+                        const finish = (value?: BackgroundToContent) => {
+                            if (settled) return;
+                            settled = true;
+                            clearTimeout(timeout);
+                            port.onMessage.removeListener(onMessage);
+                            port.onDisconnect.removeListener(onDisconnect);
+                            done(value);
+                        };
+                        const onMessage = (value: BackgroundToContent) => finish(value);
+                        const onDisconnect = () => finish();
+                        const timeout = setTimeout(() => {
+                            finish();
+                            try {
+                                port.disconnect();
+                            } catch {}
+                        }, TAMPERMONKEY_REQUEST_TIMEOUT);
+
+                        port.onMessage.addListener(onMessage);
+                        port.onDisconnect.addListener(onDisconnect);
+                        try {
+                            port.postMessage(<ExternalRequest>{ method: request.method, ...request.args });
+                        } catch {
+                            finish();
+                        }
+                    });
+
+                    if (response) {
+                        sendResponse(response);
+                        return;
+                    }
+
+                    await new Promise(done => setTimeout(done, TAMPERMONKEY_RETRY_DELAY));
+                }
+
+                sendResponse({ error: 'Tampermonkey extension disconnected or did not respond' });
+            } finally {
                 resolve();
-                return;
+                lock = undefined;
             }
-
-            const [ { id, port } ] = r;
-            console.log(`Found extension ${id}`);
-
-            const h = (response: BackgroundToContent) => {
-                sendResponse(response);
-                port.onMessage.removeListener(h);
-                resolve();
-            };
-
-            port.onMessage.addListener(h);
-            port.postMessage(<ExternalRequest>{ method: request.method, ...request.args });
-            await lock;
-            lock = undefined;
         }
     };
 
@@ -178,6 +225,51 @@ const init = async () => {
         });
     };
 
+    let autoConnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let autoConnectAttempt = 0;
+
+    const scheduleAutoConnect = () => {
+        if (autoConnectTimer) clearTimeout(autoConnectTimer);
+        if (!Config.values.autoConnect) return;
+
+        const delay = RECONNECT_DELAYS[Math.min(autoConnectAttempt, RECONNECT_DELAYS.length - 1)];
+        autoConnectTimer = setTimeout(() => {
+            autoConnectAttempt++;
+            startAutoConnect();
+        }, delay);
+    };
+
+    const connectHub = async (): Promise<LocalWebSocketClient> => {
+        if (!Config.values.autoConnect) throw new Error('Auto-connect is disabled');
+        if (!Config.values.hubToken) throw new Error('Hub token is not configured');
+
+        const discoveryResp = await fetch(String(Config.values.hubUrl));
+        if (!discoveryResp.ok) throw new Error(`Hub discovery failed: ${discoveryResp.status}`);
+        const discovery = await discoveryResp.json() as HubDiscovery;
+        if (!discovery.wsUrl || !discovery.wsUrl.startsWith('ws://127.0.0.1:')) {
+            throw new Error('Hub discovery returned a non-local websocket URL');
+        }
+
+        const socket = new LocalWebSocketClient(String(Config.values.hubToken), discovery.wsUrl, 'hub');
+        setupWebSocketRelay(socket);
+        socket.listen(msg => {
+            if ('method' in msg && msg.method === 'closed') scheduleAutoConnect();
+        });
+
+        await socket.connected;
+        autoConnectAttempt = 0;
+        console.log('Connected to tm-mcp-hub', discovery.instanceId);
+        return socket;
+    };
+
+    const startAutoConnect = () => {
+        if (!Config.values.autoConnect) return;
+        void connectHub().catch((e: Error) => {
+            console.warn('tm-mcp-hub auto-connect failed:', e.message);
+            scheduleAutoConnect();
+        });
+    };
+
     runtime.onMessage.addListener((request: ExtensionRequestMessage, sender, sendResponse: (r: ExtensionResponseMessage) => void): true | undefined => {
         if (D) console.log(request.method, request);
         switch (request.method){
@@ -189,12 +281,12 @@ const init = async () => {
 
                 if ('args' in request) {
                     if (D) console.log('Connecting WebSocket client with request:', request);
-                    const { authorization, port } = request.args || {};
-                    if (!authorization || !port) {
-                        sendResponse({ ok: false, error: 'Missing authorization or port' });
+                    const { authorization, port, wsUrl, authMode } = request.args || {};
+                    if (!authorization || (!port && !wsUrl)) {
+                        sendResponse({ ok: false, error: 'Missing authorization and connection target' });
                         return;
                     }
-                    const socket = new LocalWebSocketClient(authorization, port);
+                    const socket = new LocalWebSocketClient(authorization, wsUrl || port as number, authMode);
                     setupWebSocketRelay(socket);
                     (async () => {
                         try {
@@ -237,6 +329,11 @@ const init = async () => {
                 const { name, value } = request.args;
                 (async () => {
                     await Config.setValue(name, value);
+                    if (name === 'autoConnect' || name === 'hubUrl' || name === 'hubToken') {
+                        if (autoConnectTimer) clearTimeout(autoConnectTimer);
+                        autoConnectAttempt = 0;
+                        startAutoConnect();
+                    }
                     sendResponse({ ok: true });
                 })();
                 break;
@@ -282,6 +379,7 @@ const init = async () => {
             console.set(Config.values.logLevel);
         });
         console.set(Config.values.logLevel);
+        startAutoConnect();
     })();
 
     (async () => {

@@ -12,7 +12,10 @@ export type ExtensionConfig = ExtensionPermanentConfig & ExtensionSessionConfig;
 type ExtensionPermanentConfig = {
     logLevel: LogLevel,
     configMode: number,
-    externalExtensionIds: ExtensionIdToTry[]
+    externalExtensionIds: ExtensionIdToTry[],
+    autoConnect: boolean,
+    hubUrl: string,
+    hubToken: string
 };
 
 // eslint-disable-next-line @typescript-eslint/ban-types
@@ -28,7 +31,10 @@ const changeListeners: { [config_value in (ConfigKeys | SessionKeys)]?: ChangeLi
 const defaults: ExtensionPermanentConfig = {
     configMode: 0,
     logLevel: short_id === 'hohm' ? 100 : 0,
-    externalExtensionIds: [ ...ExtensionIdsToTry ]
+    externalExtensionIds: [ ...ExtensionIdsToTry ],
+    autoConnect: false,
+    hubUrl: 'http://127.0.0.1:4001/.well-known/tampermonkey-mcp',
+    hubToken: ''
 };
 
 const session_defaults: ExtensionSessionConfig & Partial<ExtensionPermanentConfig> = {
